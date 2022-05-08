@@ -1,0 +1,6 @@
+﻿**/.vscode
+**/.ipynb_checkpoints
+**/.idea
+**/.spyproject
+**/.spyderproject
+*.pyc
