@@ -51,6 +51,7 @@ def return_config_as_dic(ini):
             
     return conf
 
+
 # make them float
 config_stock = return_config_as_dic(ini_stock)
 config_stock = {k.lower(): {item: float(fee) for item, fee in v.items()} for k, v in config_stock.items()}
@@ -65,6 +66,7 @@ config_option = return_config_as_dic(ini_option)
 config_option = {k.lower(): {item.lower(): float(fee) for item, fee in v.items()} for k, v in config_option.items()}
 
 config_multiplier = return_config_as_dic(ini_multiplier)
+
 
 # =============================================================================
 # Below mostly using by Excel
@@ -83,26 +85,34 @@ def total_comm_option(broker:str, product:str, position, execution= False):
         return c['{}_execution_fee'.format(product.lower())]
     
     return c[product.lower()] * position
-        
-def total_comm_stock(broker: str, p, q, sym= ''):
-    ''' using by excel '''
-    if broker in list(brokers_name.keys()):
-        broker = brokers_name[broker]
+
+
+def total_comm_stock(p,
+                     q,
+                     broker: str = '',
+                     sym: str = '',
+                     hk_comm_scheme: dict = {},
+                     turnover: float = 0,
+                     round_to: int = 2):
+    """ using by excel """
+
+    # using broker to look up scheme
+    if broker:
+        hk_comm_scheme = config_stock.get(broker.lower(), None)
+        if not hk_comm_scheme:
+            raise ValueError('Broker no found. Available broker is: {}'.format(','.join(list(config_stock.keys()))))
+
+    if not turnover:
+        turnover = p * q
     
-    if broker.lower() not in config_stock.keys():
-        raise ValueError('Broker no found. Available broker is: {}'.format(','.join(list(config_stock.keys()))))
-    
-    c = config_stock[broker.lower()]
-    turnover = p * q
-    
-    comm = max(c['comm_min'], turnover * c['comm'])
-    trans_levy = c['trans_levy'] * turnover
-    trading_fee = c['trading_fee'] * turnover
-    clearing_fee = max(c['clearing_fee_min'], turnover * c['clearing_fee'])
-    stamp_duty = max(1, turnover * c['stamp_duty'])
-    
-    
-    total_comm = comm + trans_levy + trading_fee + clearing_fee + stamp_duty
+    comm = max(hk_comm_scheme['comm_min'], turnover * hk_comm_scheme['comm'])
+    trans_levy = hk_comm_scheme['trans_levy'] * turnover
+    trading_fee = hk_comm_scheme['trading_fee'] * turnover
+    clearing_fee = max(hk_comm_scheme['clearing_fee_min'], turnover * hk_comm_scheme['clearing_fee'])
+    stamp_duty = max(1, turnover * hk_comm_scheme['stamp_duty'])
+    frc_levy = turnover * hk_comm_scheme['frc_levy']
+
+    total_comm = comm + trans_levy + trading_fee + clearing_fee + stamp_duty + frc_levy
     
     if sym:
         if type(sym) == float:
@@ -111,26 +121,36 @@ def total_comm_stock(broker: str, p, q, sym= ''):
         if util.is_cbbc(sym) or util.is_warrant(sym):
             total_comm -= stamp_duty
     
-    return total_comm
+    return round(total_comm, round_to)
 
-def total_comm_futures(broker, product, q):
+
+def total_comm_futures(p,
+                       q,
+                       broker: str = '',
+                       sym: str = '',
+                       hk_future_scheme: dict = {},
+                       round_to: int = 0):
+
     # if chinese, covnert it to english
-    if broker in list(brokers_name.keys()):
-        broker = brokers_name[broker]
+    if broker:
+        hk_future_scheme = config_future.get(broker.lower(), None)
+        if not hk_future_scheme:
+            raise ValueError('Broker no found. Available broker is: {}'.format(','.join(list(config_future.keys()))))
     
-    if broker.lower() not in config_future.keys():
-        raise ValueError('Broker no found. Available broker is: {}'.format(','.join(list(config_future.keys()))))
-    
-    c =  config_future[broker.lower()]
-    return c[product.lower()] * q
+    comm = hk_future_scheme[sym.upper()]  # each one commission
+    return round(q * comm, round_to)
 
-def total_comm_us_stock(broker:str, shares, price, action:str):
-    
-    if broker in list(brokers_name.keys()):
-        broker = brokers_name[broker]
-    
-    if broker.lower() not in config_us_stock.keys():
-        raise ValueError('Broker no found. Available broker is: {}'.format(','.join(list(config_us_stock.keys()))))
+
+def total_comm_us_stock(shares,
+                        price,
+                        action: str,
+                        broker: str = '',
+                        us_stock_scheme: dict = {},
+                        round_to: int = 2):
+    if broker:
+        us_stock_scheme = config_us_stock.get(broker.lower(), None)
+        if not us_stock_scheme:
+            raise ValueError('Broker no found. Available broker is: {}'.format(','.join(list(config_us_stock.keys()))))
         
     # chinese action
     action_buy_dic = dict(zip(buy_phase_chinese,['buy'] * len(buy_phase_chinese)))
@@ -139,27 +159,27 @@ def total_comm_us_stock(broker:str, shares, price, action:str):
         action = 'buy'
     elif action in list(action_sell_dic.keys()):
         action = 'sell'
-        
-    c = config_us_stock[broker.lower()]
 
     fee = 0   
     
-    comm = max(c['comm_min'], shares * c['comm'])
-    platform_fee = max(c['platform_fee_min'], shares * c['platform_fee'])
-    clearing_fee = c['clearing_fee'] * shares
+    comm = max(us_stock_scheme['comm_min'], shares * us_stock_scheme['comm'])
+    platform_fee = max(us_stock_scheme['platform_fee_min'], shares * us_stock_scheme['platform_fee'])
+    clearing_fee = us_stock_scheme['clearing_fee'] * shares
     
     fee += comm + platform_fee + clearing_fee
     
     if action.lower() == 'sell' or action.lower() == 's':
-        sfc_fee = max(c['sfc_fee'] * (shares* price),  c['sfc_fee_min'])
-        trading_levy = max(c['trading_levy'] * shares, c['trading_levy_min']) # 交易活動費
+        sfc_fee = max(us_stock_scheme['sfc_fee'] * (shares* price),  us_stock_scheme['sfc_fee_min'])
+        trading_levy = max(us_stock_scheme['trading_levy'] * shares, us_stock_scheme['trading_levy_min']) # 交易活動費
         fee += sfc_fee
         fee += trading_levy
         
     return fee
 
+
 def ipo_margin_fee(loan_amount, interest_rate, loan_duration):
     return (loan_amount * (interest_rate / 100)) * (loan_duration/ 365)
+
 
 def futures_multipier(product):
     """
@@ -176,15 +196,37 @@ class CommissionManager:
     """
     I will look up config/commission.ini
     """
-    
-    
-    def __init__(self, broker_name, round_up_to= 2):
-        self.broker = broker_name
+
+    def __init__(self,
+                 broker_name: str,
+                 round_up_to: int = 2):
+
+        self.broker = broker_name.lower()
         self.round_up_to = round_up_to
         
-        #commission_profiles = ini_Manager('commission').return_config_as_dic()
-        #self.comm = commission_profiles[broker_name]
-        
+        # self.commission_profiles = util.ini_Manager('commission').return_config_as_dic()
+        self.comm_stock = config_stock.get(self.broker, None)
+        self.comm_future = config_future.get(self.broker, None)
+        self.comm_us_stock = config_us_stock.get(self.broker, None)
+        self.comm_option = config_option.get(self.broker, None)
+
+        self.multipler = config_multiplier
+
+    def change_broker(self, new_broker_name):
+        self.__init__(broker_name=new_broker_name, round_up_to=self.round_up_to)
+
+    def hk_stock(self,
+                 p: float = None,
+                 q: float = None,
+                 sym: str = '',
+                 turnover: float = 0):
+        return total_comm_stock(p=p,
+                                q=q,
+                                sym=sym,
+                                turnover=turnover,
+                                hk_comm_scheme=self.comm_stock,
+                                round_to=self.round_up_to)
+
     def transaction_cost_by_sym(self, sym: str, p: float= '', q: float= '', turnover: float= ''):
         """
         Parameters
@@ -224,13 +266,13 @@ class CommissionManager:
             return 0
     
         from math import ceil
-        mini = float(self.comm['min'])
-        comm = float(self.comm['comm']) / 100
-        levy = float(self.comm['levy']) / 100
-        trans = float(self.comm['trans']) / 100
-        ccass = float(self.comm['ccass']) / 100
-        ccass_min = float(self.comm['ccass_min'])
-        stamp = float(self.comm['stamp']) / 100
+        mini = float(self.comm_stock['comm_min'])
+        comm = float(self.comm_stock['comm']) / 100
+        levy = float(self.comm_stock['trans_levy']) / 100
+        trans = float(self.comm_stock['trans']) / 100
+        ccass = float(self.comm_stock['ccass']) / 100
+        ccass_min = float(self.comm_stock['ccass_min'])
+        stamp = float(self.comm_stock['stamp']) / 100
         # margin_rate = float(self.comm['margin_rate']) / 100
     
         # comm?
@@ -264,6 +306,14 @@ class CommissionManager:
         else:
             print('product no found')
             return 0
-    
 
 
+if __name__ == '__main__':
+    cmm = CommissionManager('FUTU')
+    # print(total_comm_stock(100, 100, 'FUTU'))
+    print(total_comm_us_stock(2, 600, 'buy', 'FUTU'))
+    print(total_comm_us_stock(2, 600, 'sell', 'FUTU'))
+    ini = util.ini_Manager('commission').return_config_as_dic()
+
+    print(cmm.transaction_cost_by_sym('700', 100, 100))
+    pass
